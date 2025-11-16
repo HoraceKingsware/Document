@@ -137,11 +137,11 @@ class JDAutoLogin:
 
         while retry_count < max_retries:
             try:
-                # 检查是否存在验证码
+                # 检查是否存在图片验证码
                 captcha_element = self.driver.find_element(By.ID, "JD_Verification1")
 
                 if captcha_element.is_displayed():
-                    print(f"检测到验证码，尝试识别（第{retry_count + 1}次）...")
+                    print(f"检测到图片验证码，尝试识别（第{retry_count + 1}次）...")
 
                     # 截取验证码图片
                     captcha_screenshot = captcha_element.screenshot_as_png
@@ -165,11 +165,11 @@ class JDAutoLogin:
                     time.sleep(1)
                     break
                 else:
-                    print("未检测到验证码")
+                    print("图片验证码元素存在但不可见")
                     break
 
             except NoSuchElementException:
-                print("未检测到验证码元素")
+                print("未检测到图片验证码元素")
                 break
 
             except Exception as e:
@@ -178,11 +178,53 @@ class JDAutoLogin:
 
                 if retry_count < max_retries:
                     print("刷新验证码...")
-                    # 可以添加刷新验证码的逻辑
                     time.sleep(2)
                 else:
                     print("验证码识别失败次数过多")
                     raise
+
+        # 检查是否有滑块验证码
+        self._check_slider_captcha()
+
+    def _check_slider_captcha(self):
+        """检查是否有滑块验证码"""
+        try:
+            # 京东可能使用的滑块验证码类名
+            slider_selectors = [
+                "JDJR-button-slide",
+                "slider-button",
+                "slide-verify",
+                "slidetounlock"
+            ]
+
+            for selector in slider_selectors:
+                try:
+                    slider = self.driver.find_element(By.CLASS_NAME, selector)
+                    if slider.is_displayed():
+                        print(f"⚠️  检测到滑块验证码（类名: {selector}）")
+                        print("提示：当前版本暂不支持自动滑块验证，请手动完成滑块验证")
+                        # 保存截图
+                        self.driver.save_screenshot("slider_captcha.png")
+                        print("滑块验证码截图已保存到: slider_captcha.png")
+                        return True
+                except NoSuchElementException:
+                    continue
+
+            # 尝试查找iframe中的滑块
+            try:
+                iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+                for iframe in iframes:
+                    if "jd" in iframe.get_attribute("src").lower() or "captcha" in iframe.get_attribute("src").lower():
+                        print(f"⚠️  检测到验证码iframe: {iframe.get_attribute('src')}")
+                        print("提示：可能需要手动完成验证")
+                        return True
+            except:
+                pass
+
+        except Exception as e:
+            print(f"检查滑块验证码时出错: {str(e)}")
+
+        return False
 
     def _click_login_button(self):
         """点击登录按钮"""
@@ -192,49 +234,93 @@ class JDAutoLogin:
             )
             login_button.click()
             print("已点击登录按钮")
-            time.sleep(2)
+            time.sleep(3)  # 增加等待时间，让验证码有时间出现
+
+            # 保存点击后的页面截图
+            self.driver.save_screenshot("after_login_click.png")
+            print("登录后页面截图已保存到: after_login_click.png")
 
         except Exception as e:
             print(f"点击登录按钮时出错: {str(e)}")
             raise
 
-    def _wait_for_login_success(self, timeout=10):
+    def _wait_for_login_success(self, timeout=15):
         """等待登录成功"""
         try:
-            # 方法1: 检查是否跳转到京东首页
+            # 检查是否需要处理验证
             for i in range(timeout):
                 current_url = self.driver.current_url
-                print(f"当前URL: {current_url}")
 
-                if 'www.jd.com' in current_url or 'home.jd.com' in current_url:
-                    print("检测到已跳转到京东首页")
+                # 只在前3秒和后3秒打印URL，避免刷屏
+                if i < 3 or i >= timeout - 3:
+                    print(f"当前URL [{i+1}/{timeout}]: {current_url}")
+                elif i == 3:
+                    print("...")
+
+                # 检查是否有滑块验证码需要处理
+                if self._check_slider_captcha():
+                    print("\n需要手动完成滑块验证，等待60秒...")
+                    time.sleep(60)
+                    continue
+
+                # 检查各种错误提示
+                error_selectors = [
+                    ("class", "error-msg"),
+                    ("class", "err-tip"),
+                    ("id", "error"),
+                    ("class", "msg-error")
+                ]
+
+                for selector_type, selector_value in error_selectors:
+                    try:
+                        if selector_type == "class":
+                            error_elem = self.driver.find_element(By.CLASS_NAME, selector_value)
+                        else:
+                            error_elem = self.driver.find_element(By.ID, selector_value)
+
+                        if error_elem.is_displayed():
+                            error_text = error_elem.text
+                            print(f"❌ 登录错误: {error_text}")
+                            self.driver.save_screenshot("login_error.png")
+                            print("错误页面截图已保存到: login_error.png")
+                            return False
+                    except:
+                        pass
+
+                # 检查是否跳转到京东首页或其他页面
+                if 'www.jd.com' in current_url or 'home.jd.com' in current_url or current_url == 'https://www.jd.com/':
+                    print("✓ 检测到已跳转到京东首页")
                     return True
 
-                # 方法2: 检查是否存在用户名元素
+                # 检查是否存在用户信息元素
                 try:
                     user_info = self.driver.find_element(By.CLASS_NAME, "nickname")
                     if user_info:
-                        print(f"检测到用户信息: {user_info.text}")
+                        print(f"✓ 检测到用户信息: {user_info.text}")
                         return True
-                except:
-                    pass
-
-                # 检查是否有错误提示
-                try:
-                    error_msg = self.driver.find_element(By.CLASS_NAME, "error-msg")
-                    if error_msg.is_displayed():
-                        print(f"登录错误: {error_msg.text}")
-                        return False
                 except:
                     pass
 
                 time.sleep(1)
 
-            print("等待登录超时")
+            print("⏱️  等待登录超时")
+            print("最终页面URL:", self.driver.current_url)
+            self.driver.save_screenshot("login_timeout.png")
+            print("超时页面截图已保存到: login_timeout.png")
+
+            # 打印页面源代码的一部分用于调试
+            page_source = self.driver.page_source
+            if "验证码" in page_source or "captcha" in page_source.lower():
+                print("\n⚠️  页面源代码中包含'验证码'相关内容，可能需要验证")
+            if "滑块" in page_source or "slider" in page_source.lower():
+                print("\n⚠️  页面源代码中包含'滑块'相关内容，可能需要滑块验证")
+
             return False
 
         except Exception as e:
             print(f"等待登录成功时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def get_cookies(self):
