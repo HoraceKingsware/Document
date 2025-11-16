@@ -35,10 +35,15 @@ env/
 *.swo
 *~
 
-# 临时文件
+# 临时文件和调试文件
 captcha_temp.png
 jd_cookies.txt
 *.log
+after_login_click.png
+login_timeout.png
+login_error.png
+slider_captcha.png
+page_source.html
 
 # PDF文件
 *.pdf

@@ -189,40 +189,107 @@ class JDAutoLogin:
     def _check_slider_captcha(self):
         """检查是否有滑块验证码"""
         try:
-            # 京东可能使用的滑块验证码类名
-            slider_selectors = [
+            # 保存当前页面HTML用于调试
+            with open("page_source.html", "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+
+            # 方法1: 通过多种类名检测滑块
+            slider_class_selectors = [
                 "JDJR-button-slide",
                 "slider-button",
                 "slide-verify",
-                "slidetounlock"
+                "slidetounlock",
+                "nc_scale",  # 阿里云滑块
+                "nc-lang-cnt",
+                "tc-button",  # 腾讯滑块
             ]
 
-            for selector in slider_selectors:
+            for selector in slider_class_selectors:
                 try:
                     slider = self.driver.find_element(By.CLASS_NAME, selector)
                     if slider.is_displayed():
                         print(f"⚠️  检测到滑块验证码（类名: {selector}）")
                         print("提示：当前版本暂不支持自动滑块验证，请手动完成滑块验证")
-                        # 保存截图
                         self.driver.save_screenshot("slider_captcha.png")
                         print("滑块验证码截图已保存到: slider_captcha.png")
                         return True
                 except NoSuchElementException:
                     continue
+                except Exception as e:
+                    continue
 
-            # 尝试查找iframe中的滑块
+            # 方法2: 通过ID检测
+            slider_id_selectors = [
+                "captcha_modal",
+                "captcha-box",
+                "jd-captcha",
+                "nc_1_wrapper",
+            ]
+
+            for selector in slider_id_selectors:
+                try:
+                    slider = self.driver.find_element(By.ID, selector)
+                    if slider.is_displayed():
+                        print(f"⚠️  检测到滑块验证码（ID: {selector}）")
+                        print("提示：请手动完成滑块验证")
+                        self.driver.save_screenshot("slider_captcha.png")
+                        print("滑块验证码截图已保存到: slider_captcha.png")
+                        return True
+                except NoSuchElementException:
+                    continue
+                except Exception as e:
+                    continue
+
+            # 方法3: 通过文本内容检测
+            page_text = self.driver.page_source
+            slider_keywords = ["拖动滑块", "滑动验证", "向右滑动", "slide", "请完成安全验证"]
+
+            for keyword in slider_keywords:
+                if keyword in page_text:
+                    print(f"⚠️  页面包含滑块相关文本: '{keyword}'")
+
+                    # 尝试通过XPath查找包含该文本的元素
+                    try:
+                        elements = self.driver.find_elements(By.XPATH, f"//*[contains(text(), '{keyword}')]")
+                        if elements:
+                            print(f"找到 {len(elements)} 个包含'{keyword}'的元素")
+                            self.driver.save_screenshot("slider_captcha.png")
+                            print("滑块验证码截图已保存到: slider_captcha.png")
+                            print("提示：检测到滑块验证，请手动完成")
+                            return True
+                    except:
+                        pass
+
+            # 方法4: 检测iframe
             try:
                 iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
-                for iframe in iframes:
-                    if "jd" in iframe.get_attribute("src").lower() or "captcha" in iframe.get_attribute("src").lower():
-                        print(f"⚠️  检测到验证码iframe: {iframe.get_attribute('src')}")
-                        print("提示：可能需要手动完成验证")
-                        return True
-            except:
-                pass
+                print(f"页面中共有 {len(iframes)} 个iframe")
+
+                for idx, iframe in enumerate(iframes):
+                    try:
+                        src = iframe.get_attribute("src") or ""
+                        iframe_id = iframe.get_attribute("id") or ""
+                        iframe_class = iframe.get_attribute("class") or ""
+
+                        print(f"  iframe[{idx}]: src={src[:50] if src else 'None'}, id={iframe_id}, class={iframe_class}")
+
+                        if any(keyword in src.lower() for keyword in ["captcha", "verify", "jd", "slide"]):
+                            print(f"⚠️  检测到验证码iframe: {src}")
+                            self.driver.save_screenshot("slider_captcha.png")
+                            print("提示：可能需要手动完成iframe中的验证")
+                            return True
+
+                    except Exception as e:
+                        print(f"  检查iframe[{idx}]时出错: {str(e)}")
+                        continue
+
+            except Exception as e:
+                print(f"检查iframe时出错: {str(e)}")
 
         except Exception as e:
             print(f"检查滑块验证码时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
         return False
 
@@ -240,6 +307,13 @@ class JDAutoLogin:
             self.driver.save_screenshot("after_login_click.png")
             print("登录后页面截图已保存到: after_login_click.png")
 
+            # 立即检查是否出现验证码
+            print("\n检查是否出现验证码...")
+            if self._check_slider_captcha():
+                print("⚠️  检测到验证码，请在浏览器中手动完成验证")
+                print("等待120秒供手动操作...")
+                time.sleep(120)  # 给用户足够时间完成验证
+
         except Exception as e:
             print(f"点击登录按钮时出错: {str(e)}")
             raise
@@ -247,6 +321,7 @@ class JDAutoLogin:
     def _wait_for_login_success(self, timeout=15):
         """等待登录成功"""
         try:
+            print("\n等待登录结果...")
             # 检查是否需要处理验证
             for i in range(timeout):
                 current_url = self.driver.current_url
@@ -256,12 +331,6 @@ class JDAutoLogin:
                     print(f"当前URL [{i+1}/{timeout}]: {current_url}")
                 elif i == 3:
                     print("...")
-
-                # 检查是否有滑块验证码需要处理
-                if self._check_slider_captcha():
-                    print("\n需要手动完成滑块验证，等待60秒...")
-                    time.sleep(60)
-                    continue
 
                 # 检查各种错误提示
                 error_selectors = [
